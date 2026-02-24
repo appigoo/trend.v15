@@ -31,12 +31,15 @@ def fetch_single_stock(symbol):
     try:
         df = yf.download(symbol, period="5d", interval="5m", progress=False)
         if df.empty:
+            print(f"Empty data for {symbol}")
             return symbol, None
         df = df[['Open', 'High', 'Low', 'Close', 'Volume']]
         df.columns = ['open', 'high', 'low', 'close', 'volume']
         df.index.name = 'timestamp'
+        print(f"Success: {symbol} - rows: {len(df)}, last close: {df['close'].iloc[-1]}")
         return symbol, df
-    except:
+    except Exception as e:
+        print(f"Error for {symbol}: {e}")
         return symbol, None
 
 # ======================
@@ -126,7 +129,12 @@ else:
         with ThreadPoolExecutor(max_workers=10) as executor:
             results = list(executor.map(fetch_single_stock, tickers))
     
-    data_dict = {sym: df for sym, df in results if df is not None}
+    data_dict = {}
+    for sym, df in results:
+        if df is not None:
+            if sym in data_dict:
+                print(f"Duplicate key warning: {sym}")
+            data_dict[sym] = df
     
     if not data_dict:
         st.error("所有股票數據載入失敗，請檢查網路或代碼")
