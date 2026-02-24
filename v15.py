@@ -1,91 +1,165 @@
 import streamlit as st
-import yfinance as yf
 import pandas as pd
-import plotly.graph_objects as go
+import numpy as np
+import yfinance as yf
+import matplotlib.pyplot as plt
+import time
 
-# --- 頁面設定 ---
-st.set_page_config(page_title="AI 股票趨勢掃描器", layout="wide")
-st.title("📈 均線與 MACD 自動交易策略掃描器")
+# ======================
+# 手動計算 EMA 的函數
+# ======================
+def calculate_ema(series, period):
+    """
+    使用 pandas ewm 計算 EMA (與 ta-lib EMA 一致的平滑方式)
+    """
+    alpha = 2 / (period + 1)
+    ema = series.ewm(alpha=alpha, adjust=False).mean()
+    return ema
 
-# --- 側邊欄：參數設定 ---
-st.sidebar.header("設定參數")
-ticker = st.sidebar.text_input("輸入股票代碼 (例如: AAPL, TSLA, 2330.TW)", value="AAPL")
-interval = st.sidebar.selectbox("K線週期", ["5m", "15m", "1h", "1d"], index=0)
-period = st.sidebar.selectbox("抓取時間範圍", ["5d", "1mo", "3mo", "1y"], index=0)
+# ======================
+# 手動計算 MACD 的函數
+# ======================
+def calculate_macd(close, fast=12, slow=26, signal=9):
+    """
+    手動計算 MACD、Signal 線、Histogram
+    """
+    ema_fast = calculate_ema(close, fast)
+    ema_slow = calculate_ema(close, slow)
+    macd_line = ema_fast - ema_slow
+    signal_line = calculate_ema(macd_line, signal)
+    histogram = macd_line - signal_line
+    return macd_line, signal_line, histogram
 
-@st.cache_data
-def load_data(ticker, period, interval):
-    df = yf.download(ticker, period=period, interval=interval)
-    if df.empty:
+# ======================
+# 獲取股票數據 (使用 yfinance)
+# ======================
+@st.cache_data(ttl=60)  # 快取 60 秒，避免過度請求
+def get_stock_data(symbol, period="5d", interval="5m"):
+    try:
+        df = yf.download(symbol, period=period, interval=interval, progress=False)
+        if df.empty:
+            st.error(f"無法獲取 {symbol} 的數據，請檢查代碼或網路")
+            return None
+        df = df[['Open', 'High', 'Low', 'Close', 'Volume']]
+        df.columns = ['open', 'high', 'low', 'close', 'volume']
+        df.index.name = 'timestamp'
+        return df
+    except Exception as e:
+        st.error(f"下載數據失敗: {e}")
+        return None
+
+# ======================
+# 計算所有指標
+# ======================
+def calculate_indicators(df):
+    if df is None or len(df) < 50:
         return df
     
-    # 確保欄位名稱為一維
-    if isinstance(df.columns, pd.MultiIndex):
-        df.columns = [c[0] for c in df.columns]
-        
-    # 計算 EMA
-    df['EMA5'] = df['Close'].ewm(span=5, adjust=False).mean()
-    df['EMA10'] = df['Close'].ewm(span=10, adjust=False).mean()
-    df['EMA20'] = df['Close'].ewm(span=20, adjust=False).mean()
+    df = df.copy()
+    df['EMA5']  = calculate_ema(df['close'], 5)
+    df['EMA10'] = calculate_ema(df['close'], 10)
+    df['EMA20'] = calculate_ema(df['close'], 20)
     
-    # 計算 MACD
-    df['EMA12'] = df['Close'].ewm(span=12, adjust=False).mean()
-    df['EMA26'] = df['Close'].ewm(span=26, adjust=False).mean()
-    df['DIF'] = df['EMA12'] - df['EMA26']
-    df['DEA'] = df['DIF'].ewm(span=9, adjust=False).mean()
-    df['MACD_Hist'] = df['DIF'] - df['DEA']
+    df['MACD'], df['MACD_signal'], df['MACD_hist'] = calculate_macd(df['close'])
+    
+    # 20期平均成交量
+    df['avg_volume'] = df['volume'].rolling(window=20).mean()
     
     return df
 
-df = load_data(ticker, period, interval)
-
-if df.empty:
-    st.warning("找不到該股票的數據，請確認代碼與週期是否支援。")
-else:
-    # --- 繪製技術線圖 ---
-    fig = go.Figure()
+# ======================
+# 產生買賣信號 (簡化版策略)
+# ======================
+def generate_signals(df):
+    if df is None or len(df) < 30:
+        return []
     
-    # K線圖
-    fig.add_trace(go.Candlestick(x=df.index,
-                open=df['Open'], high=df['High'],
-                low=df['Low'], close=df['Close'],
-                name='K線'))
-    
-    # 加入 EMA
-    fig.add_trace(go.Scatter(x=df.index, y=df['EMA5'], line=dict(color='green', width=1.5), name='EMA5'))
-    fig.add_trace(go.Scatter(x=df.index, y=df['EMA10'], line=dict(color='orange', width=1.5), name='EMA10'))
-    fig.add_trace(go.Scatter(x=df.index, y=df['EMA20'], line=dict(color='blue', width=1.5), name='EMA20'))
-
-    fig.update_layout(title=f"{ticker} 價格走勢與均線", xaxis_rangeslider_visible=False, height=500)
-    st.plotly_chart(fig, use_container_width=True)
-
-    # --- 策略掃描邏輯 ---
-    st.subheader("🤖 最新交易信號判定")
-    
-    # 取得最新兩筆資料來判斷交叉
-    last_row = df.iloc[-1]
-    prev_row = df.iloc[-2]
-    
-    current_price = round(last_row['Close'], 2)
-    
-    # 多方條件：EMA5 金叉 EMA10 + DIF > DEA + 價格在 EMA20 之上
-    buy_signal = (prev_row['EMA5'] <= prev_row['EMA10']) and (last_row['EMA5'] > last_row['EMA10']) and \
-                 (last_row['DIF'] > last_row['DEA']) and (current_price > last_row['EMA20'])
-                 
-    # 空方條件：EMA5 死叉 EMA10 + DIF < DEA + 價格在 EMA20 之下
-    sell_signal = (prev_row['EMA5'] >= prev_row['EMA10']) and (last_row['EMA5'] < last_row['EMA10']) and \
-                  (last_row['DIF'] < last_row['DEA']) and (current_price < last_row['EMA20'])
-
-    # --- 輸出結果 ---
-    if buy_signal:
-        stop_loss = round(current_price * 0.985, 2) # 1.5% 止損設定
-        st.success(f"🟢 **強烈買入信號**\n\n出現買入信號！現在以 **${current_price}** 價買入 10 股，同時設定 **${stop_loss}** 價止損。")
-    elif sell_signal:
-        stop_loss = round(current_price * 1.015, 2) # 1.5% 止損設定
-        st.error(f"🔴 **強烈賣出/做空信號**\n\n出現賣出信號！現在以 **${current_price}** 價賣出 10 股，同時設定 **${stop_loss}** 價止損。")
-    else:
-        st.info(f"⚪ **目前無強烈交易信號**\n\n目前最新價格為 **${current_price}**，均線與 MACD 未出現明確的共振交叉，建議持續觀望。")
+    signals = []
+    for i in range(1, len(df)):
+        row = df.iloc[i]
+        prev = df.iloc[i-1]
         
-    # 顯示原始數據供參考
-    with st.expander("查看近期詳細數據"):
-        st.dataframe(df[['Close', 'EMA5', 'EMA10', 'EMA20', 'DIF', 'DEA']].tail(10))
+        close = row['close']
+        ema5 = row['EMA5']
+        ema10 = row['EMA10']
+        macd = row['MACD']
+        macd_sig = row['MACD_signal']
+        hist = row['MACD_hist']
+        vol = row['volume']
+        avg_vol = row['avg_volume']
+        
+        # 買入條件：價格 > EMA5 > EMA10 + MACD 金叉 + 成交量放大
+        if (close > ema5 > ema10) and (macd > macd_sig > prev['MACD_signal']) and (vol > avg_vol * 1.2):
+            recent_low = df['low'].iloc[max(0, i-10):i+1].min()
+            stop_loss = recent_low * 0.98
+            signals.append(f"**買入信號** @ {close:.2f}  (時間: {df.index[i]}) | 建議止損: {stop_loss:.2f}")
+        
+        # 賣出條件：價格 < EMA5 < EMA10 + MACD 死叉 + 成交量放大
+        elif (close < ema5 < ema10) and (macd < macd_sig < prev['MACD_signal']) and (vol > avg_vol * 1.2):
+            recent_high = df['high'].iloc[max(0, i-10):i+1].max()
+            stop_loss = recent_high * 1.02
+            signals.append(f"**賣出信號** @ {close:.2f}  (時間: {df.index[i]}) | 建議止損: {stop_loss:.2f}")
+    
+    return signals[-5:]  # 只顯示最近 5 條
+
+# ======================
+# Streamlit 主程式
+# ======================
+st.title("實時股票監控與買賣建議（無 ta-lib 版）")
+st.markdown("使用 yfinance + 純 pandas/numpy 計算 EMA & MACD，每 60 秒自動更新")
+
+symbol = st.text_input("輸入股票代碼", value="AAPL").upper().strip()
+auto_refresh = st.checkbox("自動刷新（每 60 秒）", value=True)
+
+placeholder = st.empty()
+
+while True:
+    with placeholder.container():
+        df = get_stock_data(symbol)
+        if df is not None:
+            df_ind = calculate_indicators(df)
+            
+            # 顯示最新數據
+            st.subheader(f"最新數據 - {symbol} (5分鐘K線)")
+            st.dataframe(df_ind.tail(8)[['close','EMA5','EMA10','EMA20','MACD','MACD_signal','MACD_hist','volume']])
+            
+            # 繪製圖表
+            fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 7), sharex=True)
+            
+            # 價格 + EMA
+            ax1.plot(df_ind.index, df_ind['close'], label='Close', color='black', linewidth=1.2)
+            ax1.plot(df_ind.index, df_ind['EMA5'], label='EMA5', color='#1f77b4')
+            ax1.plot(df_ind.index, df_ind['EMA10'], label='EMA10', color='#ff7f0e')
+            ax1.plot(df_ind.index, df_ind['EMA20'], label='EMA20', color='#2ca02c')
+            ax1.legend()
+            ax1.set_title(f"{symbol} 價格與 EMA")
+            ax1.grid(True, alpha=0.3)
+            
+            # MACD
+            ax2.plot(df_ind.index, df_ind['MACD'], label='MACD', color='#1f77b4')
+            ax2.plot(df_ind.index, df_ind['MACD_signal'], label='Signal', color='#ff7f0e')
+            ax2.bar(df_ind.index, df_ind['MACD_hist'], label='Histogram', color='gray', alpha=0.5)
+            ax2.axhline(0, color='black', linestyle='--', linewidth=0.8)
+            ax2.legend()
+            ax2.set_title("MACD")
+            ax2.grid(True, alpha=0.3)
+            
+            st.pyplot(fig)
+            
+            # 買賣建議
+            st.subheader("最新買賣信號")
+            signals = generate_signals(df_ind)
+            if signals:
+                for sig in signals:
+                    if "買入" in sig:
+                        st.success(sig)
+                    else:
+                        st.warning(sig)
+            else:
+                st.info("目前無明確買賣信號")
+    
+    if not auto_refresh:
+        st.stop()
+    
+    time.sleep(60)
+    st.rerun()
