@@ -96,10 +96,23 @@ def generate_signals(df, symbol):
 # ======================
 st.title("💹 多股票監控 & Telegram 報警系統")
 
+# ======================
+# 側邊欄配置 (將 multiselect 改為 text_input)
+# ======================
 with st.sidebar:
-    #symbols = st.multiselect("監控清單", ["AAPL", "TSLA", "NVDA", "BTC-USD"], default=["AAPL", "TSLA"])
-    symbols = st.text_input("代碼名單", value="AAPL", "TSLA", "NVDA", "BTC-USD").upper()
-    auto_refresh = st.toggle("自動刷新", value=True)
+    st.header("監控設定")
+    
+    # 用戶輸入字串，例如 "AAPL, TSLA, 2330.TW"
+    input_symbols = st.text_input(
+        "輸入股票代碼 (用逗號分隔)", 
+        value="TSLA, NIO, TSLL, XPEV, META, GOOGL, AAPL, NVDA, AMZN, MSFT, TSM, GLD, BTC-USD, QQQ"
+    )
+    
+    # 將字串轉換為乾淨的清單
+    symbols = [s.strip().upper() for s in input_symbols.split(",") if s.strip()]
+    
+    auto_refresh = st.toggle("自動刷新 (60s)", value=True)
+    st.info("支援美股 (AAPL)、港股 (0700.HK)、台股 (2330.TW) 及加密貨幣 (BTC-USD)")
 
 if symbols:
     tabs = st.tabs(symbols)
