@@ -1,10 +1,10 @@
-#New v.2
 import streamlit as st
 import pandas as pd
 import numpy as np
 import yfinance as yf
 import matplotlib.pyplot as plt
 import time
+from telegram import Bot
 
 # ======================
 # 手動計算 EMA 的函數
@@ -120,56 +120,83 @@ def generate_signals(df):
 st.title("實時股票監控與買賣建議App（整合突破阻力策略）")
 st.markdown("基於EMA、MACD、成交量及突破阻力位，實時監控並給出建議。每60秒自動更新。策略來自圖片分析：下跌趨勢反轉及阻力突破。")
 
-symbol = st.text_input("輸入股票代碼", value="TSLA").upper().strip()
+symbols_input = st.text_input("輸入股票代碼，用逗號分隔", value="TSLA").upper().strip()
+symbols = [s.strip() for s in symbols_input.split(',') if s.strip()]
 auto_refresh = st.checkbox("自動刷新（每60秒）", value=True)
+
+# 初始化 session_state 用於追蹤已發送信號
+if 'sent_signals' not in st.session_state:
+    st.session_state.sent_signals = {symbol: [] for symbol in symbols}
 
 placeholder = st.empty()
 
+# Telegram Bot 初始化（使用 secrets）
+try:
+    bot = Bot(token=st.secrets["TELEGRAM_BOT_TOKEN"])
+    chat_id = st.secrets["TELEGRAM_CHAT_ID"]
+except KeyError:
+    st.warning("Telegram secrets 未設定，通知功能禁用。")
+    bot = None
+    chat_id = None
+
 while True:
     with placeholder.container():
-        df = get_stock_data(symbol)
-        if df is not None:
-            df_ind = calculate_indicators(df)
-            
-            # 顯示最新數據
-            st.subheader(f"最新數據 - {symbol} (5分鐘K線)")
-            st.dataframe(df_ind.tail(8)[['close','EMA5','EMA10','EMA20','MACD','MACD_signal','MACD_hist','volume', 'resistance']])
-            
-            # 繪製圖表
-            fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 7), sharex=True)
-            
-            # 價格 + EMA + 阻力位
-            ax1.plot(df_ind.index, df_ind['close'], label='Close', color='black', linewidth=1.2)
-            ax1.plot(df_ind.index, df_ind['EMA5'], label='EMA5', color='#1f77b4')
-            ax1.plot(df_ind.index, df_ind['EMA10'], label='EMA10', color='#ff7f0e')
-            ax1.plot(df_ind.index, df_ind['EMA20'], label='EMA20', color='#2ca02c')
-            ax1.plot(df_ind.index, df_ind['resistance'], label='Resistance', color='red', linestyle='--')
-            ax1.legend()
-            ax1.set_title(f"{symbol} 價格、EMA與阻力位")
-            ax1.grid(True, alpha=0.3)
-            
-            # MACD
-            ax2.plot(df_ind.index, df_ind['MACD'], label='MACD', color='#1f77b4')
-            ax2.plot(df_ind.index, df_ind['MACD_signal'], label='Signal', color='#ff7f0e')
-            ax2.bar(df_ind.index, df_ind['MACD_hist'], label='Histogram', color='gray', alpha=0.5)
-            ax2.axhline(0, color='black', linestyle='--', linewidth=0.8)
-            ax2.legend()
-            ax2.set_title("MACD")
-            ax2.grid(True, alpha=0.3)
-            
-            st.pyplot(fig)
-            
-            # 買賣建議
-            st.subheader("最新買賣信號")
-            signals = generate_signals(df_ind)
-            if signals:
-                for sig in signals:
-                    if "買入" in sig:
-                        st.success(sig)
+        tabs = st.tabs(symbols)  # 使用 tabs 改善 UI，每個股票一個 tab
+        for idx, symbol in enumerate(symbols):
+            with tabs[idx]:
+                df = get_stock_data(symbol)
+                if df is not None:
+                    df_ind = calculate_indicators(df)
+                    
+                    # 顯示最新數據（使用 expander 改善 UI）
+                    with st.expander(f"最新數據 - {symbol} (5分鐘K線)", expanded=True):
+                        st.dataframe(df_ind.tail(8)[['close','EMA5','EMA10','EMA20','MACD','MACD_signal','MACD_hist','volume', 'resistance']].style.format("{:.2f}"))
+                    
+                    # 繪製圖表（添加更多樣式）
+                    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 7), sharex=True, gridspec_kw={'height_ratios': [3, 1]})
+                    
+                    # 價格 + EMA + 阻力位
+                    ax1.plot(df_ind.index, df_ind['close'], label='Close', color='black', linewidth=1.2)
+                    ax1.plot(df_ind.index, df_ind['EMA5'], label='EMA5', color='#1f77b4')
+                    ax1.plot(df_ind.index, df_ind['EMA10'], label='EMA10', color='#ff7f0e')
+                    ax1.plot(df_ind.index, df_ind['EMA20'], label='EMA20', color='#2ca02c')
+                    ax1.plot(df_ind.index, df_ind['resistance'], label='Resistance', color='red', linestyle='--')
+                    ax1.legend(loc='upper left')
+                    ax1.set_title(f"{symbol} 價格、EMA與阻力位")
+                    ax1.grid(True, alpha=0.3)
+                    ax1.set_ylabel('價格')
+                    
+                    # MACD
+                    ax2.plot(df_ind.index, df_ind['MACD'], label='MACD', color='#1f77b4')
+                    ax2.plot(df_ind.index, df_ind['MACD_signal'], label='Signal', color='#ff7f0e')
+                    ax2.bar(df_ind.index, df_ind['MACD_hist'], label='Histogram', color=np.where(df_ind['MACD_hist'] > 0, 'green', 'red'), alpha=0.5)
+                    ax2.axhline(0, color='black', linestyle='--', linewidth=0.8)
+                    ax2.legend(loc='upper left')
+                    ax2.set_title("MACD")
+                    ax2.grid(True, alpha=0.3)
+                    ax2.set_ylabel('MACD 值')
+                    
+                    st.pyplot(fig)
+                    
+                    # 買賣建議
+                    st.subheader("最新買賣信號")
+                    signals = generate_signals(df_ind)
+                    if signals:
+                        for sig in signals:
+                            full_sig = f"[{symbol}] {sig}"
+                            if full_sig not in st.session_state.sent_signals.get(symbol, []):
+                                if bot and chat_id:
+                                    try:
+                                        bot.send_message(chat_id=chat_id, text=full_sig)
+                                        st.session_state.sent_signals[symbol] = st.session_state.sent_signals.get(symbol, []) + [full_sig]
+                                    except Exception as e:
+                                        st.error(f"發送 Telegram 訊息失敗: {e}")
+                            if "買入" in sig:
+                                st.success(full_sig)
+                            else:
+                                st.warning(full_sig)
                     else:
-                        st.warning(sig)
-            else:
-                st.info("目前無明確買賣信號")
+                        st.info("目前無明確買賣信號")
     
     if not auto_refresh:
         st.stop()
