@@ -97,7 +97,8 @@ def generate_signals(df, symbol):
 st.title("💹 多股票監控 & Telegram 報警系統")
 
 with st.sidebar:
-    symbols = st.multiselect("監控清單", ["AAPL", "TSLA", "NVDA", "BTC-USD"], default=["AAPL", "TSLA"])
+    #symbols = st.multiselect("監控清單", ["AAPL", "TSLA", "NVDA", "BTC-USD"], default=["AAPL", "TSLA"])
+    symbols = st.text_input("代碼名單", value="TSLA, NIO, TSLL, XPEV, META, GOOGL, AAPL, NVDA, AMZN, MSFT, TSM, GLD, BTC-USD, QQQ").upper()
     auto_refresh = st.toggle("自動刷新", value=True)
 
 if symbols:
