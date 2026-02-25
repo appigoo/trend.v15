@@ -139,16 +139,20 @@ symbols_input = st.text_input("輸入股票代碼，用逗號分隔", value="TSL
 symbols = [s.strip() for s in symbols_input.split(',') if s.strip()]
 auto_refresh = st.checkbox("自動刷新（每60秒）", value=True)
 
-# 初始化已發送記錄
-if 'sent_signals' not in st.session_state:
-    st.session_state.sent_signals = {symbol: [] for symbol in symbols}
-
 # 從 secrets 讀取 Telegram 設定
 TELEGRAM_BOT_TOKEN = st.secrets.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = st.secrets.get("TELEGRAM_CHAT_ID", "")
 
 if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
     st.warning("Telegram Bot Token 或 Chat ID 未在 secrets 中設定，通知功能將禁用。")
+
+# 安全同步 sent_signals
+if 'sent_signals' not in st.session_state:
+    st.session_state.sent_signals = {}
+
+for symbol in symbols:
+    if symbol not in st.session_state.sent_signals:
+        st.session_state.sent_signals[symbol] = []
 
 placeholder = st.empty()
 
@@ -197,7 +201,7 @@ while True:
                         if signals:
                             for sig in signals:
                                 full_sig = f"[{symbol}] {sig}"
-                                if full_sig not in st.session_state.sent_signals.get(symbol, []):
+                                if full_sig not in st.session_state.sent_signals[symbol]:
                                     if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
                                         success, msg = send_telegram_message(TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, full_sig)
                                         if success:
