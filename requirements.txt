@@ -4,4 +4,4 @@ pandas
 plotly
 numpy
 matplotlib
-bot
+
