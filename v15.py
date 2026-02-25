@@ -120,7 +120,7 @@ def generate_signals(df):
 st.title("實時股票監控與買賣建議App（整合突破阻力策略）")
 st.markdown("基於EMA、MACD、成交量及突破阻力位，實時監控並給出建議。每60秒自動更新。策略來自圖片分析：下跌趨勢反轉及阻力突破。")
 
-symbol = st.text_input("輸入股票代碼", value="AAPL").upper().strip()
+symbol = st.text_input("輸入股票代碼", value="TSLA").upper().strip()
 auto_refresh = st.checkbox("自動刷新（每60秒）", value=True)
 
 placeholder = st.empty()
