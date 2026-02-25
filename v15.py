@@ -117,7 +117,7 @@ st.title("💹 全能股票監控機器人")
 
 with st.sidebar:
     st.header("設定中心")
-    raw_input = st.text_input("輸入監控代碼 (逗號分隔)", value="AAPL, TSLA, NVDA")
+    raw_input = st.text_input("輸入監控代碼 (逗號分隔)", value="TSLA, NIO, TSLL, XPEV, META, GOOGL, AAPL, NVDA, AMZN, MSFT, TSM, GLD, BTC-USD, QQQ")
     symbols = [s.strip().upper() for s in raw_input.split(",") if s.strip()]
     auto_refresh = st.toggle("開啟自動監控", value=True)
     st.divider()
